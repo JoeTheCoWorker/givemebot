@@ -109,7 +109,7 @@ async function createGiveaway(
     if (existing && existing.isActive) {
         return {
             success: false,
-            error: 'There is already an active giveaway in this channel. End it first with `/giveaway end`',
+            error: 'There is already an active giveaway in this channel. End it first with `/giveaway-end`',
         }
     }
 
@@ -246,306 +246,20 @@ bot.onSlashCommand('help', async (handler, { channelId }) => {
     helpText += '• React with 🎁 to a giveaway message (1 FREE entry)\n'
     helpText += '• Tip the bot for additional entries (every $' + globalTipEntryFeeUsd.toFixed(2) + ' USD in ETH = 1 entry)\n\n'
 
+    helpText += '**General Commands:**\n'
+    helpText += '• `/giveaway-status` - Check giveaway status (available to all users)\n\n'
     helpText += '**Admin Commands:**\n'
     helpText += '• `/giveaway-create` - Create a new giveaway (interactive, FREE entry!)\n'
     helpText += '• `/giveaway-end` - End current giveaway early\n'
-    helpText += '• `/giveaway-status` - Check giveaway status\n'
     helpText += '• `/giveaway-set-tip-fee <usd-amount>` - Set global tip entry fee (default: $0.50 per entry)\n'
     helpText += '• `/giveaway-set-cap <max-entries>` - Set max tip entries per user (default: 10)\n'
     helpText += '• `/giveaway-set-eth-price <price>` - Update ETH price in USD (default: $3000)\n\n'
-    helpText += '**Note:** Entry is always FREE with one reaction! Tips give additional entries.\n\n'
-    helpText += '**Legacy Commands (still supported):**\n'
-    helpText += '• `/giveaway create` - Create giveaway (interactive)\n'
-    helpText += '• `/giveaway end` - End giveaway\n'
-    helpText += '• `/giveaway status` - Check status\n'
-    helpText += '• `/giveaway set-tip-fee <amount>` - Set global tip fee\n'
-    helpText += '• `/giveaway set-cap <entries>` - Set cap\n'
-    helpText += '• `/giveaway set-eth-price <price>` - Set ETH price'
+    helpText += '**Note:** Entry is always FREE with one reaction! Tips give additional entries.'
 
     await handler.sendMessage(channelId, helpText)
 })
 
-// Giveaway admin commands
-bot.onSlashCommand('giveaway', async (handler, event) => {
-    const { channelId, userId, spaceId, args } = event
-
-    // Check if user is admin
-    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
-    if (!isAdmin) {
-        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
-        return
-    }
-
-    const subcommand = args[0]?.toLowerCase()
-
-    // Create giveaway: /giveaway create
-    if (subcommand === 'create') {
-        // Check if there's already an active giveaway
-        const existing = getGiveaway(channelId)
-        if (existing && existing.isActive) {
-            await handler.sendMessage(
-                channelId,
-                '❌ There is already an active giveaway in this channel. End it first with `/giveaway end`'
-            )
-            return
-        }
-
-        // If no args provided, show interactive template
-        if (args.length === 1) {
-            const templateMessage = await handler.sendMessage(
-                channelId,
-                `🎁 **Create New Giveaway**\n\n` +
-                    `**Copy the template below, fill in your details, and reply to this message:**\n\n` +
-                    `\`\`\`\n` +
-                    `Prize: [Your prize description here]\n` +
-                    `Duration: [24h, 7d, 30m, etc.]\n` +
-                    `Entry Fee: [0.50 or leave blank for default]\n` +
-                    `Max Entries: [10 or leave blank for default]\n` +
-                    `\`\`\`\n\n` +
-                    `**Quick Examples (copy & paste, then edit):**\n\n` +
-                    `\`\`\`\n` +
-                    `Prize: 100 USDC\n` +
-                    `Duration: 24h\n` +
-                    `\`\`\`\n\n` +
-                    `\`\`\`\n` +
-                    `Prize: 1 ETH\n` +
-                    `Duration: 7d\n` +
-                    `Entry Fee: 1.00\n` +
-                    `Max Entries: 20\n` +
-                    `\`\`\`\n\n` +
-                    `**Notes:**\n` +
-                    `• Prize and Duration are required\n` +
-                    `• Entry Fee defaults to $0.50 if not specified\n` +
-                    `• Max Entries defaults to 10 if not specified\n` +
-                    `• Duration: use 30m (minutes), 24h (hours), or 7d (days)`
-            )
-
-            // Track that this user is creating a giveaway
-            giveawayCreationState.set(userId, {
-                channelId,
-                templateMessageId: templateMessage.eventId,
-            })
-
-            return
-        }
-
-        // If args provided, use the old direct method (backward compatibility)
-        const prize = args.slice(1, -1).join(' ') // Everything except last arg
-        const durationStr = args[args.length - 1] // Last arg is duration
-
-        if (!prize || !durationStr) {
-            await handler.sendMessage(
-                channelId,
-                'Usage: `/giveaway create <prize description> <duration> [cap:10]`\n' +
-                    'Or use `/giveaway create` for interactive mode.\n' +
-                    'Duration format: 1h, 2d, 30m, etc.\n' +
-                    'Optional: cap:<max-entries> (default: 10)\n' +
-                    '**Note:** Entry is always FREE with one reaction! Tip entry fee is set globally with `/giveaway-set-tip-fee`\n' +
-                    'Examples:\n' +
-                    '• `/giveaway create 100 USDC 24h`\n' +
-                    '• `/giveaway create 100 USDC 24h cap:20`'
-            )
-            return
-        }
-
-        // Get tip entry cap from args or use default (10 additional entries)
-        const capArg = args.find(arg => arg.startsWith('cap:'))
-        const tipEntryCap = capArg ? parseInt(capArg.split(':')[1]) : 10
-
-        // Use helper function to create giveaway (uses global tip entry fee)
-        const result = await createGiveaway(handler, channelId, prize, durationStr, tipEntryCap)
-        if (!result.success) {
-            await handler.sendMessage(channelId, `❌ ${result.error}`)
-            return
-        }
-    }
-    // End giveaway: /giveaway end
-    else if (subcommand === 'end') {
-        const giveaway = getGiveaway(channelId)
-        if (!giveaway || !giveaway.isActive) {
-            await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
-            return
-        }
-
-        giveaway.isActive = false
-        const winner = selectWinner(giveaway)
-
-        if (!winner) {
-            await handler.sendMessage(channelId, '🎁 Giveaway ended. No entries were received.')
-            return
-        }
-
-        const allUsers = new Set([
-            ...giveaway.reactionEntries.keys(),
-            ...giveaway.tipEntries.keys()
-        ])
-        const totalEntries = Array.from(allUsers).reduce((sum, userId) => 
-            sum + getTotalEntries(giveaway, userId), 0
-        )
-        const winnerEntries = getTotalEntries(giveaway, winner)
-
-        await handler.sendMessage(
-            channelId,
-            `🎉 **GIVEAWAY ENDED!** 🎉\n\n` +
-                `**Prize:** ${giveaway.prize}\n` +
-                `**Winner:** <@${winner}>\n` +
-                `**Winner's entries:** ${winnerEntries}\n` +
-                `**Total entries:** ${totalEntries}\n` +
-                `**Participants:** ${allUsers.size}\n\n` +
-                `Congratulations to the winner! 🎊`
-        )
-
-        activeGiveaways.delete(channelId)
-    }
-    // Status: /giveaway status
-    else if (subcommand === 'status') {
-        const giveaway = getGiveaway(channelId)
-        if (!giveaway || !giveaway.isActive) {
-            await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
-            return
-        }
-
-        const allUsers = new Set([
-            ...giveaway.reactionEntries.keys(),
-            ...giveaway.tipEntries.keys()
-        ])
-        const totalEntries = Array.from(allUsers).reduce((sum, userId) => 
-            sum + getTotalEntries(giveaway, userId), 0
-        )
-        const tipFeeUsd = (Number(giveaway.tipEntryFee) / 1e18) * ethPriceUsd
-        const capAmountUsd = tipFeeUsd * giveaway.tipEntryCap
-
-        let statusText = `**🎁 Giveaway Status**\n\n`
-        statusText += `**Prize:** ${giveaway.prize}\n`
-        statusText += `**Started:** ${giveaway.startTime.toLocaleString()}\n`
-        statusText += `**Ends:** ${giveaway.endTime.toLocaleString()}\n`
-        statusText += `**Time remaining:** ${formatTimeRemaining(giveaway.endTime)}\n`
-        statusText += `**Tip entry fee:** $${tipFeeUsd.toFixed(2)} USD (${formatWei(giveaway.tipEntryFee)} ETH)\n`
-        statusText += `**Max tip entries:** ${giveaway.tipEntryCap} (cap: $${capAmountUsd.toFixed(2)} USD in ETH)\n\n`
-        statusText += `**Entries:**\n`
-        statusText += `• Total entries: ${totalEntries}\n`
-        statusText += `• Participants: ${allUsers.size}\n\n`
-
-        // Show top 5 participants
-        const sortedEntries = Array.from(allUsers)
-            .map(userId => ({
-                userId,
-                total: getTotalEntries(giveaway, userId),
-                reactions: giveaway.reactionEntries.get(userId) || 0,
-                tips: giveaway.tipEntries.get(userId) || 0
-            }))
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 5)
-
-        if (sortedEntries.length > 0) {
-            statusText += `**Top Participants:**\n`
-            for (const entry of sortedEntries) {
-                statusText += `• <@${entry.userId}>: ${entry.total} entries (${entry.reactions} reactions, ${entry.tips} tips)\n`
-            }
-        }
-
-        await handler.sendMessage(channelId, statusText)
-    }
-    // Set tip fee: /giveaway set-fee <usd-amount> (sets global fee)
-    else if (subcommand === 'set-fee' || subcommand === 'set-tip-fee') {
-        const feeArg = args[1]
-        if (!feeArg) {
-            await handler.sendMessage(
-                channelId,
-                'Usage: `/giveaway set-fee <usd-amount>`\n' +
-                    'Example: `/giveaway set-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
-                    '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
-            )
-            return
-        }
-
-        const feeUsd = parseFloat(feeArg)
-        if (isNaN(feeUsd) || feeUsd <= 0) {
-            await handler.sendMessage(channelId, '❌ Invalid amount. Please provide a positive number.')
-            return
-        }
-
-        // Update global tip entry fee
-        globalTipEntryFeeUsd = feeUsd
-        const tipEntryFeeWei = usdToWei(feeUsd)
-        
-        await handler.sendMessage(
-            channelId,
-            `✅ Global tip entry fee updated to $${feeUsd.toFixed(2)} USD per entry (${formatWei(tipEntryFeeWei)} ETH)\n\n` +
-                `This applies to all giveaways. Users get 1 additional entry for every $${feeUsd.toFixed(2)} USD in ETH they tip.\n` +
-                `**Note:** Entry via reaction is always FREE!`
-        )
-    }
-    // Set tip entry cap: /giveaway set-cap <max-entries>
-    else if (subcommand === 'set-cap') {
-        const capArg = args[1]
-        if (!capArg) {
-            await handler.sendMessage(
-                channelId,
-                'Usage: `/giveaway set-cap <max-entries>`\n' +
-                    'Example: `/giveaway set-cap 20` (sets max tip entries to 20)'
-            )
-            return
-        }
-
-        const cap = parseInt(capArg)
-        if (isNaN(cap) || cap <= 0) {
-            await handler.sendMessage(channelId, '❌ Invalid number. Please provide a positive integer.')
-            return
-        }
-
-        const giveaway = getGiveaway(channelId)
-        if (!giveaway || !giveaway.isActive) {
-            await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
-            return
-        }
-
-        giveaway.tipEntryCap = cap
-        const tipFeeUsd = (Number(giveaway.tipEntryFee) / 1e18) * ethPriceUsd
-        const capAmountUsd = tipFeeUsd * cap
-        await handler.sendMessage(
-            channelId,
-            `✅ Tip entry cap updated to ${cap} entries\n` +
-                `Users can tip up to $${capAmountUsd.toFixed(2)} USD in ETH for additional entries`
-        )
-    }
-    // Set ETH price: /giveaway set-eth-price <price>
-    else if (subcommand === 'set-eth-price') {
-        const priceArg = args[1]
-        if (!priceArg) {
-            await handler.sendMessage(
-                channelId,
-                'Usage: `/giveaway set-eth-price <price>`\n' +
-                    'Example: `/giveaway set-eth-price 3000` (sets ETH price to $3000 USD)'
-            )
-            return
-        }
-
-        const price = parseFloat(priceArg)
-        if (isNaN(price) || price <= 0) {
-            await handler.sendMessage(channelId, '❌ Invalid price. Please provide a positive number.')
-            return
-        }
-
-        ethPriceUsd = price
-        await handler.sendMessage(channelId, `✅ ETH price updated to $${price.toFixed(2)} USD`)
-    }
-    // Unknown subcommand
-    else {
-        await handler.sendMessage(
-            channelId,
-            'Available subcommands:\n' +
-                '• `create` - Create a new giveaway\n' +
-                '• `end` - End current giveaway\n' +
-                '• `status` - Check giveaway status\n' +
-                '• `set-fee` or `set-tip-fee` - Set global tip entry fee\n' +
-                '• `set-cap` - Set max tip entries per user\n' +
-                '• `set-eth-price` - Update ETH price'
-        )
-    }
-})
-
-// Standalone slash command handlers for giveaway subcommands
+// Standalone slash command handlers for giveaway commands
 bot.onSlashCommand('giveaway-create', async (handler, event) => {
     const { channelId, userId, spaceId } = event
 
@@ -561,7 +275,7 @@ bot.onSlashCommand('giveaway-create', async (handler, event) => {
     if (existing && existing.isActive) {
         await handler.sendMessage(
             channelId,
-            '❌ There is already an active giveaway in this channel. End it first with `/giveaway end`'
+            '❌ There is already an active giveaway in this channel. End it first with `/giveaway-end`'
         )
         return
     }
@@ -690,46 +404,6 @@ bot.onSlashCommand('giveaway-status', async (handler, event) => {
     await handler.sendMessage(channelId, statusText)
 })
 
-bot.onSlashCommand('giveaway-set-fee', async (handler, event) => {
-    const { channelId, userId, spaceId, args } = event
-
-    // Check if user is admin
-    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
-    if (!isAdmin) {
-        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
-        return
-    }
-
-    const feeArg = args[0]
-    if (!feeArg) {
-        await handler.sendMessage(
-            channelId,
-            'Usage: `/giveaway-set-fee <usd-amount>`\n' +
-                'Example: `/giveaway-set-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
-                '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
-        )
-        return
-    }
-
-    const feeUsd = parseFloat(feeArg)
-    if (isNaN(feeUsd) || feeUsd <= 0) {
-        await handler.sendMessage(channelId, '❌ Invalid amount. Please provide a positive number.')
-        return
-    }
-
-    // Update global tip entry fee
-    globalTipEntryFeeUsd = feeUsd
-    const tipEntryFeeWei = usdToWei(feeUsd)
-    
-    await handler.sendMessage(
-        channelId,
-        `✅ Global tip entry fee updated to $${feeUsd.toFixed(2)} USD per entry (${formatWei(tipEntryFeeWei)} ETH)\n\n` +
-            `This applies to all giveaways. Users get 1 additional entry for every $${feeUsd.toFixed(2)} USD in ETH they tip.\n` +
-            `**Note:** Entry via reaction is always FREE!`
-    )
-})
-
-// Alias for giveaway-set-tip-fee (same functionality)
 bot.onSlashCommand('giveaway-set-tip-fee', async (handler, event) => {
     const { channelId, userId, spaceId, args } = event
 

@@ -6,10 +6,6 @@ const commands = [
         description: 'Get help with bot commands',
     },
     {
-        name: 'giveaway',
-        description: 'Manage giveaways - admin only',
-    },
-    {
         name: 'giveaway-create',
         description: 'Create a new giveaway - admin only',
     },
@@ -20,10 +16,6 @@ const commands = [
     {
         name: 'giveaway-status',
         description: 'Check giveaway status',
-    },
-    {
-        name: 'giveaway-set-fee',
-        description: 'Set global tip entry fee - admin only',
     },
     {
         name: 'giveaway-set-tip-fee',
