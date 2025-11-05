@@ -728,16 +728,16 @@ bot.onMessage(async (handler, event) => {
         return
     }
 
-    // Clear creation state before creating (in case of errors)
-    giveawayCreationState.delete(userId)
-
     // Create the giveaway (uses global tip entry fee)
     const result = await createGiveaway(handler, channelId, prize, durationStr, tipEntryCap)
     if (!result.success) {
         await handler.sendMessage(channelId, `❌ ${result.error}`)
+        // Don't clear state on error - user can retry with corrected information
         return
     }
 
+    // Clear creation state only after successful creation
+    giveawayCreationState.delete(userId)
     // Success message already sent in createGiveaway
 })
 
