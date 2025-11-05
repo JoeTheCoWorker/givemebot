@@ -21,6 +21,9 @@ interface Giveaway {
 // Store active giveaways per channel (channelId -> Giveaway)
 const activeGiveaways = new Map<string, Giveaway>()
 
+// Store users creating giveaways (userId -> { channelId, templateMessageId })
+const giveawayCreationState = new Map<string, { channelId: string; templateMessageId: string }>()
+
 // ETH price in USD (can be updated via admin command or API)
 // Default: $3000/ETH (adjust as needed)
 let ethPriceUsd = 3000
@@ -70,6 +73,84 @@ function getTotalEntries(giveaway: Giveaway, userId: string): number {
     const reactionEntries = giveaway.reactionEntries.get(userId) || 0
     const tipEntries = giveaway.tipEntries.get(userId) || 0
     return reactionEntries + tipEntries
+}
+
+// Helper function to create a giveaway
+async function createGiveaway(
+    handler: any,
+    channelId: string,
+    prize: string,
+    durationStr: string,
+    tipFeeUsd: number = 0.5,
+    tipEntryCap: number = 10
+): Promise<{ success: boolean; error?: string }> {
+    // Parse duration (e.g., "24h", "2d", "30m")
+    const durationMatch = durationStr.match(/^(\d+)([hdm])$/i)
+    if (!durationMatch) {
+        return {
+            success: false,
+            error: 'Invalid duration format. Use: 1h (hours), 2d (days), 30m (minutes)\nExample: 24h, 7d, 30m',
+        }
+    }
+
+    const durationValue = parseInt(durationMatch[1])
+    const durationUnit = durationMatch[2].toLowerCase()
+
+    let msDuration = 0
+    if (durationUnit === 'm') msDuration = durationValue * 60 * 1000
+    else if (durationUnit === 'h') msDuration = durationValue * 60 * 60 * 1000
+    else if (durationUnit === 'd') msDuration = durationValue * 24 * 60 * 60 * 1000
+
+    // Check if there's already an active giveaway
+    const existing = getGiveaway(channelId)
+    if (existing && existing.isActive) {
+        return {
+            success: false,
+            error: 'There is already an active giveaway in this channel. End it first with `/giveaway end`',
+        }
+    }
+
+    const tipEntryFee = usdToWei(tipFeeUsd)
+    const startTime = new Date()
+    const endTime = new Date(startTime.getTime() + msDuration)
+
+    const giveaway: Giveaway = {
+        channelId,
+        prize,
+        startTime,
+        endTime,
+        tipEntryFee,
+        tipEntryCap,
+        tipEntries: new Map(),
+        reactionEntries: new Map(),
+        isActive: true,
+    }
+
+    activeGiveaways.set(channelId, giveaway)
+
+    // Calculate cap amount in USD
+    const capAmountUsd = tipFeeUsd * tipEntryCap
+
+    // Announce the giveaway
+    const announcement = await handler.sendMessage(
+        channelId,
+        `🎉 **GIVEAWAY STARTED!** 🎉\n\n` +
+            `**Prize:** ${prize}\n` +
+            `**Ends:** ${endTime.toLocaleString()}\n` +
+            `**Time remaining:** ${formatTimeRemaining(endTime)}\n\n` +
+            `**How to Enter:**\n` +
+            `• React with 🎁 to this message (1 entry)\n` +
+            `• Tip this bot for additional entries (every $${tipFeeUsd.toFixed(2)} USD in ETH = 1 entry)\n` +
+            `• Maximum additional entries from tips: ${tipEntryCap} (tip up to $${capAmountUsd.toFixed(2)} USD in ETH)\n\n` +
+            `Good luck! 🍀`
+    )
+
+    giveaway.announcementMessageId = announcement.eventId
+
+    // Add reaction to the announcement message
+    await handler.sendReaction(channelId, announcement.eventId, '🎁')
+
+    return { success: true }
 }
 
 // Select random winner based on entry weights
@@ -168,43 +249,8 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
 
     const subcommand = args[0]?.toLowerCase()
 
-    // Create giveaway: /giveaway create <prize> <duration> [tip-fee]
+    // Create giveaway: /giveaway create
     if (subcommand === 'create') {
-        const prize = args.slice(1, -1).join(' ') // Everything except last arg
-        const durationStr = args[args.length - 1] // Last arg is duration
-
-        if (!prize || !durationStr) {
-            await handler.sendMessage(
-                channelId,
-                'Usage: `/giveaway create <prize description> <duration> [fee:0.50] [cap:10]`\n' +
-                    'Duration format: 1h, 2d, 30m, etc.\n' +
-                    'Optional: fee:<amount> (default: $0.50), cap:<max-entries> (default: 10)\n' +
-                    'Examples:\n' +
-                    '• `/giveaway create 100 USDC 24h`\n' +
-                    '• `/giveaway create 100 USDC 24h fee:1.00 cap:20`'
-            )
-            return
-        }
-
-        // Parse duration (e.g., "24h", "2d", "30m")
-        const durationMatch = durationStr.match(/^(\d+)([hdm])$/)
-        if (!durationMatch) {
-            await handler.sendMessage(
-                channelId,
-                'Invalid duration format. Use: 1h (hours), 2d (days), 30m (minutes)\n' +
-                    'Example: `/giveaway create 100 USDC 24h`'
-            )
-            return
-        }
-
-        const durationValue = parseInt(durationMatch[1])
-        const durationUnit = durationMatch[2]
-
-        let msDuration = 0
-        if (durationUnit === 'm') msDuration = durationValue * 60 * 1000
-        else if (durationUnit === 'h') msDuration = durationValue * 60 * 60 * 1000
-        else if (durationUnit === 'd') msDuration = durationValue * 24 * 60 * 60 * 1000
-
         // Check if there's already an active giveaway
         const existing = getGiveaway(channelId)
         if (existing && existing.isActive) {
@@ -215,53 +261,77 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
             return
         }
 
+        // If no args provided, show interactive template
+        if (args.length === 1) {
+            const templateMessage = await handler.sendMessage(
+                channelId,
+                `🎁 **Create New Giveaway**\n\n` +
+                    `**Copy the template below, fill in your details, and reply to this message:**\n\n` +
+                    `\`\`\`\n` +
+                    `Prize: [Your prize description here]\n` +
+                    `Duration: [24h, 7d, 30m, etc.]\n` +
+                    `Entry Fee: [0.50 or leave blank for default]\n` +
+                    `Max Entries: [10 or leave blank for default]\n` +
+                    `\`\`\`\n\n` +
+                    `**Quick Examples (copy & paste, then edit):**\n\n` +
+                    `\`\`\`\n` +
+                    `Prize: 100 USDC\n` +
+                    `Duration: 24h\n` +
+                    `\`\`\`\n\n` +
+                    `\`\`\`\n` +
+                    `Prize: 1 ETH\n` +
+                    `Duration: 7d\n` +
+                    `Entry Fee: 1.00\n` +
+                    `Max Entries: 20\n` +
+                    `\`\`\`\n\n` +
+                    `**Notes:**\n` +
+                    `• Prize and Duration are required\n` +
+                    `• Entry Fee defaults to $0.50 if not specified\n` +
+                    `• Max Entries defaults to 10 if not specified\n` +
+                    `• Duration: use 30m (minutes), 24h (hours), or 7d (days)`
+            )
+
+            // Track that this user is creating a giveaway
+            giveawayCreationState.set(userId, {
+                channelId,
+                templateMessageId: templateMessage.eventId,
+            })
+
+            return
+        }
+
+        // If args provided, use the old direct method (backward compatibility)
+        const prize = args.slice(1, -1).join(' ') // Everything except last arg
+        const durationStr = args[args.length - 1] // Last arg is duration
+
+        if (!prize || !durationStr) {
+            await handler.sendMessage(
+                channelId,
+                'Usage: `/giveaway create <prize description> <duration> [fee:0.50] [cap:10]`\n' +
+                    'Or use `/giveaway create` for interactive mode.\n' +
+                    'Duration format: 1h, 2d, 30m, etc.\n' +
+                    'Optional: fee:<amount> (default: $0.50), cap:<max-entries> (default: 10)\n' +
+                    'Examples:\n' +
+                    '• `/giveaway create 100 USDC 24h`\n' +
+                    '• `/giveaway create 100 USDC 24h fee:1.00 cap:20`'
+            )
+            return
+        }
+
         // Get tip fee from args or use default
         const tipFeeArg = args.find(arg => arg.startsWith('fee:'))
         const tipFeeUsd = tipFeeArg ? parseFloat(tipFeeArg.split(':')[1]) : 0.5
-        const tipEntryFee = usdToWei(tipFeeUsd)
 
         // Get tip entry cap from args or use default (10 additional entries)
         const capArg = args.find(arg => arg.startsWith('cap:'))
         const tipEntryCap = capArg ? parseInt(capArg.split(':')[1]) : 10
 
-        const startTime = new Date()
-        const endTime = new Date(startTime.getTime() + msDuration)
-
-        const giveaway: Giveaway = {
-            channelId,
-            prize,
-            startTime,
-            endTime,
-            tipEntryFee,
-            tipEntryCap,
-            tipEntries: new Map(),
-            reactionEntries: new Map(),
-            isActive: true,
+        // Use helper function to create giveaway
+        const result = await createGiveaway(handler, channelId, prize, durationStr, tipFeeUsd, tipEntryCap)
+        if (!result.success) {
+            await handler.sendMessage(channelId, `❌ ${result.error}`)
+            return
         }
-
-        activeGiveaways.set(channelId, giveaway)
-
-        // Calculate cap amount in USD
-        const capAmountUsd = tipFeeUsd * tipEntryCap
-
-        // Announce the giveaway
-        const announcement = await handler.sendMessage(
-            channelId,
-            `🎉 **GIVEAWAY STARTED!** 🎉\n\n` +
-                `**Prize:** ${prize}\n` +
-                `**Ends:** ${endTime.toLocaleString()}\n` +
-                `**Time remaining:** ${formatTimeRemaining(endTime)}\n\n` +
-                `**How to Enter:**\n` +
-                `• React with 🎁 to this message (1 entry)\n` +
-                `• Tip this bot for additional entries (every $${tipFeeUsd.toFixed(2)} USD in ETH = 1 entry)\n` +
-                `• Maximum additional entries from tips: ${tipEntryCap} (tip up to $${capAmountUsd.toFixed(2)} USD in ETH)\n\n` +
-                `Good luck! 🍀`
-        )
-
-        giveaway.announcementMessageId = announcement.eventId
-
-        // Add reaction to the announcement message
-        await handler.sendReaction(channelId, announcement.eventId, '🎁')
     }
     // End giveaway: /giveaway end
     else if (subcommand === 'end') {
@@ -553,6 +623,109 @@ bot.onTip(async (handler, event) => {
     }
 
     await handler.sendMessage(channelId, message)
+})
+
+// Handle interactive giveaway creation via message replies
+bot.onMessage(async (handler, event) => {
+    const { userId, channelId, message, replyId } = event
+
+    // Check if user is in giveaway creation mode
+    const creationState = giveawayCreationState.get(userId)
+    if (!creationState) return
+
+    // Check if this is a reply to the template message
+    if (!replyId || replyId !== creationState.templateMessageId) return
+
+    // Check if user is admin (should already be, but double-check)
+    const isAdmin = await handler.hasAdminPermission(userId, event.spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can create giveaways.')
+        giveawayCreationState.delete(userId)
+        return
+    }
+
+    // Parse the message for giveaway details
+    // Support multiple formats:
+    // 1. Labeled: "Prize: 100 USDC, Duration: 24h"
+    // 2. Line-by-line: "Prize: 100 USDC\nDuration: 24h"
+    // 3. Simple: "100 USDC\n24h" (first line is prize, second is duration)
+    
+    // Try labeled format first
+    let prizeMatch = message.match(/Prize:\s*(.+?)(?:\s*[,;]|\n|$)/i)
+    let durationMatch = message.match(/Duration:\s*(\d+[hdm])(?:\s*[,;]|\n|$)/i)
+    let feeMatch = message.match(/Entry Fee:\s*([\d.]+)(?:\s*[,;]|\n|$)/i)
+    let capMatch = message.match(/Max Entries:\s*(\d+)(?:\s*[,;]|\n|$)/i)
+
+    let prize = prizeMatch?.[1]?.trim()
+    let durationStr = durationMatch?.[1]?.trim()
+    let feeStr = feeMatch?.[1]?.trim()
+    let capStr = capMatch?.[1]?.trim()
+
+    // If no labeled format, try simple line-by-line format
+    if (!prize || !durationStr) {
+        const lines = message.split('\n').map(l => l.trim()).filter(l => l)
+        if (lines.length >= 2) {
+            // First line might be prize, second might be duration
+            // Check if first line looks like a prize (not a duration)
+            if (!lines[0].match(/^\d+[hdm]$/i) && lines[1].match(/^\d+[hdm]$/i)) {
+                prize = lines[0]
+                durationStr = lines[1]
+                // Third line might be fee
+                if (lines[2] && /^[\d.]+$/.test(lines[2])) {
+                    feeStr = lines[2]
+                }
+                // Fourth line might be cap
+                if (lines[3] && /^\d+$/.test(lines[3])) {
+                    capStr = lines[3]
+                }
+            }
+        }
+    }
+
+    if (!prize || !durationStr) {
+        await handler.sendMessage(
+            channelId,
+            `❌ Invalid format. Please provide:\n` +
+                `• Prize: [description]\n` +
+                `• Duration: [e.g., 24h, 7d, 30m]\n` +
+                `• Entry Fee: [optional, e.g., 0.50]\n` +
+                `• Max Entries: [optional, e.g., 10]\n\n` +
+                `Example:\n` +
+                `Prize: 100 USDC\n` +
+                `Duration: 24h\n` +
+                `Entry Fee: 0.50\n` +
+                `Max Entries: 10`
+        )
+        return
+    }
+
+    // Parse optional values with defaults
+    const tipFeeUsd = feeStr ? parseFloat(feeStr) : 0.5
+    const tipEntryCap = capStr ? parseInt(capStr) : 10
+
+    if (isNaN(tipFeeUsd) || tipFeeUsd <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid entry fee. Please provide a positive number.')
+        giveawayCreationState.delete(userId)
+        return
+    }
+
+    if (isNaN(tipEntryCap) || tipEntryCap <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid max entries. Please provide a positive integer.')
+        giveawayCreationState.delete(userId)
+        return
+    }
+
+    // Clear creation state before creating (in case of errors)
+    giveawayCreationState.delete(userId)
+
+    // Create the giveaway
+    const result = await createGiveaway(handler, channelId, prize, durationStr, tipFeeUsd, tipEntryCap)
+    if (!result.success) {
+        await handler.sendMessage(channelId, `❌ ${result.error}`)
+        return
+    }
+
+    // Success message already sent in createGiveaway
 })
 
 // Check for ended giveaways and announce winners
