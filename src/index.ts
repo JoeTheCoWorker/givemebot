@@ -135,9 +135,7 @@ async function createGiveaway(
     // Calculate cap amount in USD using global fee
     const capAmountUsd = globalTipEntryFeeUsd * tipEntryCap
 
-    // Calculate duration in readable format
-    const durationValue = parseInt(durationStr.match(/^(\d+)/)?.[1] || '0')
-    const durationUnit = durationStr.match(/([hdm])$/)?.[1] || 'h'
+    // Calculate duration in readable format (reuse durationValue and durationUnit from above)
     let durationText = ''
     if (durationUnit === 'd') durationText = durationValue === 1 ? 'day' : `${durationValue} days`
     else if (durationUnit === 'h') durationText = durationValue === 1 ? 'hour' : `${durationValue} hours`
