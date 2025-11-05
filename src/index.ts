@@ -247,20 +247,20 @@ bot.onSlashCommand('help', async (handler, { channelId }) => {
     helpText += '• Tip the bot for additional entries (every $' + globalTipEntryFeeUsd.toFixed(2) + ' USD in ETH = 1 entry)\n\n'
 
     helpText += '**General Commands:**\n'
-    helpText += '• `/giveaway-status` - Check giveaway status (available to all users)\n\n'
+    helpText += '• `/giveaway_status` - Check giveaway status (available to all users)\n\n'
     helpText += '**Admin Commands:**\n'
-    helpText += '• `/giveaway-create` - Create a new giveaway (interactive, FREE entry!)\n'
-    helpText += '• `/giveaway-end` - End current giveaway early\n'
-    helpText += '• `/giveaway-set-tip-fee <usd-amount>` - Set global tip entry fee (default: $0.50 per entry)\n'
-    helpText += '• `/giveaway-set-cap <max-entries>` - Set max tip entries per user (default: 10)\n'
-    helpText += '• `/giveaway-set-eth-price <price>` - Update ETH price in USD (default: $3000)\n\n'
+    helpText += '• `/giveaway_create` - Create a new giveaway (interactive, FREE entry!)\n'
+    helpText += '• `/giveaway_end` - End current giveaway early\n'
+    helpText += '• `/giveaway_set_tip_fee <usd-amount>` - Set global tip entry fee (default: $0.50 per entry)\n'
+    helpText += '• `/giveaway_set_cap <max-entries>` - Set max tip entries per user (default: 10)\n'
+    helpText += '• `/giveaway_set_eth_price <price>` - Update ETH price in USD (default: $3000)\n\n'
     helpText += '**Note:** Entry is always FREE with one reaction! Tips give additional entries.'
 
     await handler.sendMessage(channelId, helpText)
 })
 
 // Standalone slash command handlers for giveaway commands
-bot.onSlashCommand('giveaway-create', async (handler, event) => {
+bot.onSlashCommand('giveaway_create', async (handler, event) => {
     const { channelId, userId, spaceId } = event
 
     // Check if user is admin
@@ -275,7 +275,7 @@ bot.onSlashCommand('giveaway-create', async (handler, event) => {
     if (existing && existing.isActive) {
         await handler.sendMessage(
             channelId,
-            '❌ There is already an active giveaway in this channel. End it first with `/giveaway-end`'
+            '❌ There is already an active giveaway in this channel. End it first with `/giveaway_end`'
         )
         return
     }
@@ -292,7 +292,7 @@ bot.onSlashCommand('giveaway-create', async (handler, event) => {
             `• \`Give away 100 USDC for 2 days\`\n\n` +
             `**Required:** Prize description and duration (e.g., 24h, 7d, 30m)\n` +
             `**Optional:** Max entries from tips (default: 10)\n\n` +
-            `**Note:** Entry is FREE with one reaction! Tips give additional entries (fee set by /giveaway-set-tip-fee)\n\n` +
+            `**Note:** Entry is FREE with one reaction! Tips give additional entries (fee set by /giveaway_set_tip_fee)\n\n` +
             `**Examples:**\n` +
             `• "100 USDC for 24 hours"\n` +
             `• "Prize: 1 ETH, Duration: 7d"\n` +
@@ -306,7 +306,7 @@ bot.onSlashCommand('giveaway-create', async (handler, event) => {
     })
 })
 
-bot.onSlashCommand('giveaway-end', async (handler, event) => {
+bot.onSlashCommand('giveaway_end', async (handler, event) => {
     const { channelId, userId, spaceId } = event
 
     // Check if user is admin
@@ -353,7 +353,7 @@ bot.onSlashCommand('giveaway-end', async (handler, event) => {
     activeGiveaways.delete(channelId)
 })
 
-bot.onSlashCommand('giveaway-status', async (handler, event) => {
+bot.onSlashCommand('giveaway_status', async (handler, event) => {
     const { channelId } = event
 
     const giveaway = getGiveaway(channelId)
@@ -404,7 +404,7 @@ bot.onSlashCommand('giveaway-status', async (handler, event) => {
     await handler.sendMessage(channelId, statusText)
 })
 
-bot.onSlashCommand('giveaway-set-tip-fee', async (handler, event) => {
+bot.onSlashCommand('giveaway_set_tip_fee', async (handler, event) => {
     const { channelId, userId, spaceId, args } = event
 
     // Check if user is admin
@@ -418,8 +418,8 @@ bot.onSlashCommand('giveaway-set-tip-fee', async (handler, event) => {
     if (!feeArg) {
         await handler.sendMessage(
             channelId,
-            'Usage: `/giveaway-set-tip-fee <usd-amount>`\n' +
-                'Example: `/giveaway-set-tip-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
+            'Usage: `/giveaway_set_tip_fee <usd-amount>`\n' +
+                'Example: `/giveaway_set_tip_fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
                 '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
         )
         return
@@ -443,7 +443,7 @@ bot.onSlashCommand('giveaway-set-tip-fee', async (handler, event) => {
     )
 })
 
-bot.onSlashCommand('giveaway-set-cap', async (handler, event) => {
+bot.onSlashCommand('giveaway_set_cap', async (handler, event) => {
     const { channelId, userId, spaceId, args } = event
 
     // Check if user is admin
@@ -457,8 +457,8 @@ bot.onSlashCommand('giveaway-set-cap', async (handler, event) => {
     if (!capArg) {
         await handler.sendMessage(
             channelId,
-            'Usage: `/giveaway-set-cap <max-entries>`\n' +
-                'Example: `/giveaway-set-cap 20` (sets max tip entries to 20)'
+            'Usage: `/giveaway_set_cap <max-entries>`\n' +
+                'Example: `/giveaway_set_cap 20` (sets max tip entries to 20)'
         )
         return
     }
@@ -485,7 +485,7 @@ bot.onSlashCommand('giveaway-set-cap', async (handler, event) => {
     )
 })
 
-bot.onSlashCommand('giveaway-set-eth-price', async (handler, event) => {
+bot.onSlashCommand('giveaway_set_eth_price', async (handler, event) => {
     const { channelId, userId, spaceId, args } = event
 
     // Check if user is admin
@@ -499,8 +499,8 @@ bot.onSlashCommand('giveaway-set-eth-price', async (handler, event) => {
     if (!priceArg) {
         await handler.sendMessage(
             channelId,
-            'Usage: `/giveaway-set-eth-price <price>`\n' +
-                'Example: `/giveaway-set-eth-price 3000` (sets ETH price to $3000 USD)'
+            'Usage: `/giveaway_set_eth_price <price>`\n' +
+                'Example: `/giveaway_set_eth_price 3000` (sets ETH price to $3000 USD)'
         )
         return
     }
