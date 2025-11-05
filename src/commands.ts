@@ -6,8 +6,8 @@ const commands = [
         description: 'Get help with bot commands',
     },
     {
-        name: 'time',
-        description: 'Get the current time',
+        name: 'giveaway',
+        description: 'Manage giveaways (admin only)',
     },
 ] as const satisfies PlainMessage<SlashCommand>[]
 
