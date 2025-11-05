@@ -7,15 +7,15 @@ const commands = [
     },
     {
         name: 'giveaway',
-        description: 'Manage giveaways (admin only)',
+        description: 'Manage giveaways - admin only',
     },
     {
         name: 'giveaway-create',
-        description: 'Create a new giveaway (admin only)',
+        description: 'Create a new giveaway - admin only',
     },
     {
         name: 'giveaway-end',
-        description: 'End current giveaway early (admin only)',
+        description: 'End current giveaway early - admin only',
     },
     {
         name: 'giveaway-status',
@@ -23,19 +23,19 @@ const commands = [
     },
     {
         name: 'giveaway-set-fee',
-        description: 'Set global tip entry fee for all giveaways (admin only)',
+        description: 'Set global tip entry fee - admin only',
     },
     {
         name: 'giveaway-set-tip-fee',
-        description: 'Set global tip entry fee for all giveaways (admin only)',
+        description: 'Set global tip entry fee - admin only',
     },
     {
         name: 'giveaway-set-cap',
-        description: 'Set max tip entries per user (admin only)',
+        description: 'Set max tip entries per user - admin only',
     },
     {
         name: 'giveaway-set-eth-price',
-        description: 'Update ETH price in USD (admin only)',
+        description: 'Update ETH price in USD - admin only',
     },
 ] as const satisfies PlainMessage<SlashCommand>[]
 
