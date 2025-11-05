@@ -1,6 +1,7 @@
 {
   "name": "givemebot",
   "version": "0.0.1",
+  "description": "A Towns Protocol bot that manages cryptocurrency giveaways with dual entry methods (reactions and tips)",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
