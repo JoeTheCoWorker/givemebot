@@ -28,6 +28,10 @@ const giveawayCreationState = new Map<string, { channelId: string; templateMessa
 // Default: $3000/ETH (adjust as needed)
 let ethPriceUsd = 3000
 
+// Global tip entry fee in USD (how much USD in ETH = 1 additional entry)
+// Default: $0.50 USD per entry (adjustable via command)
+let globalTipEntryFeeUsd = 0.5
+
 // Calculate wei equivalent of USD amount
 function usdToWei(usdAmount: number): bigint {
     const ethAmount = usdAmount / ethPriceUsd
@@ -81,7 +85,6 @@ async function createGiveaway(
     channelId: string,
     prize: string,
     durationStr: string,
-    tipFeeUsd: number = 0.5,
     tipEntryCap: number = 10
 ): Promise<{ success: boolean; error?: string }> {
     // Parse duration (e.g., "24h", "2d", "30m")
@@ -110,7 +113,8 @@ async function createGiveaway(
         }
     }
 
-    const tipEntryFee = usdToWei(tipFeeUsd)
+    // Use global tip entry fee setting
+    const tipEntryFee = usdToWei(globalTipEntryFeeUsd)
     const startTime = new Date()
     const endTime = new Date(startTime.getTime() + msDuration)
 
@@ -128,19 +132,38 @@ async function createGiveaway(
 
     activeGiveaways.set(channelId, giveaway)
 
-    // Calculate cap amount in USD
-    const capAmountUsd = tipFeeUsd * tipEntryCap
+    // Calculate cap amount in USD using global fee
+    const capAmountUsd = globalTipEntryFeeUsd * tipEntryCap
 
-    // Announce the giveaway
+    // Calculate duration in readable format
+    const durationValue = parseInt(durationStr.match(/^(\d+)/)?.[1] || '0')
+    const durationUnit = durationStr.match(/([hdm])$/)?.[1] || 'h'
+    let durationText = ''
+    if (durationUnit === 'd') durationText = durationValue === 1 ? 'day' : `${durationValue} days`
+    else if (durationUnit === 'h') durationText = durationValue === 1 ? 'hour' : `${durationValue} hours`
+    else durationText = durationValue === 1 ? 'minute' : `${durationValue} minutes`
+
+    // First, ping the channel with an announcement
+    // Note: Towns Protocol doesn't support @here, so we make it prominent
+    await handler.sendMessage(
+        channelId,
+        `🎉 **NEW GIVEAWAY ALERT!** 🎉\n\n` +
+            `A new giveaway is now active for ${durationText}!\n\n` +
+            `**Prize:** ${prize}\n` +
+            `**Ends:** ${endTime.toLocaleString()}\n\n` +
+            `Check the giveaway message below to enter! 👇`
+    )
+
+    // Then create the detailed giveaway announcement
     const announcement = await handler.sendMessage(
         channelId,
-        `🎉 **GIVEAWAY STARTED!** 🎉\n\n` +
+        `🎁 **GIVEAWAY** 🎁\n\n` +
             `**Prize:** ${prize}\n` +
             `**Ends:** ${endTime.toLocaleString()}\n` +
             `**Time remaining:** ${formatTimeRemaining(endTime)}\n\n` +
             `**How to Enter:**\n` +
-            `• React with 🎁 to this message (1 entry)\n` +
-            `• Tip this bot for additional entries (every $${tipFeeUsd.toFixed(2)} USD in ETH = 1 entry)\n` +
+            `• React with 🎁 to this message (1 FREE entry)\n` +
+            `• Tip this bot for additional entries (every $${globalTipEntryFeeUsd.toFixed(2)} USD in ETH = 1 entry)\n` +
             `• Maximum additional entries from tips: ${tipEntryCap} (tip up to $${capAmountUsd.toFixed(2)} USD in ETH)\n\n` +
             `Good luck! 🍀`
     )
@@ -222,16 +245,24 @@ bot.onSlashCommand('help', async (handler, { channelId }) => {
     }
 
     helpText += '**How to Enter:**\n'
-    helpText += '• React with 🎁 to a giveaway message (1 entry)\n'
-    helpText += '• Tip the bot for additional entries (every $0.50 USD in ETH = 1 entry)\n\n'
+    helpText += '• React with 🎁 to a giveaway message (1 FREE entry)\n'
+    helpText += '• Tip the bot for additional entries (every $' + globalTipEntryFeeUsd.toFixed(2) + ' USD in ETH = 1 entry)\n\n'
 
     helpText += '**Admin Commands:**\n'
-    helpText += '• `/giveaway create <prize> <duration> [tip-fee] [cap]` - Create a new giveaway\n'
-    helpText += '• `/giveaway end` - End current giveaway early\n'
-    helpText += '• `/giveaway status` - Check giveaway status\n'
-    helpText += '• `/giveaway set-fee <usd-amount>` - Set tip entry fee (default: $0.50)\n'
-    helpText += '• `/giveaway set-cap <max-entries>` - Set max tip entries per user (default: 10)\n'
-    helpText += '• `/giveaway set-eth-price <price>` - Update ETH price in USD (default: $3000)'
+    helpText += '• `/giveaway-create` - Create a new giveaway (interactive, FREE entry!)\n'
+    helpText += '• `/giveaway-end` - End current giveaway early\n'
+    helpText += '• `/giveaway-status` - Check giveaway status\n'
+    helpText += '• `/giveaway-set-tip-fee <usd-amount>` - Set global tip entry fee (default: $0.50 per entry)\n'
+    helpText += '• `/giveaway-set-cap <max-entries>` - Set max tip entries per user (default: 10)\n'
+    helpText += '• `/giveaway-set-eth-price <price>` - Update ETH price in USD (default: $3000)\n\n'
+    helpText += '**Note:** Entry is always FREE with one reaction! Tips give additional entries.\n\n'
+    helpText += '**Legacy Commands (still supported):**\n'
+    helpText += '• `/giveaway create` - Create giveaway (interactive)\n'
+    helpText += '• `/giveaway end` - End giveaway\n'
+    helpText += '• `/giveaway status` - Check status\n'
+    helpText += '• `/giveaway set-tip-fee <amount>` - Set global tip fee\n'
+    helpText += '• `/giveaway set-cap <entries>` - Set cap\n'
+    helpText += '• `/giveaway set-eth-price <price>` - Set ETH price'
 
     await handler.sendMessage(channelId, helpText)
 })
@@ -307,27 +338,24 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
         if (!prize || !durationStr) {
             await handler.sendMessage(
                 channelId,
-                'Usage: `/giveaway create <prize description> <duration> [fee:0.50] [cap:10]`\n' +
+                'Usage: `/giveaway create <prize description> <duration> [cap:10]`\n' +
                     'Or use `/giveaway create` for interactive mode.\n' +
                     'Duration format: 1h, 2d, 30m, etc.\n' +
-                    'Optional: fee:<amount> (default: $0.50), cap:<max-entries> (default: 10)\n' +
+                    'Optional: cap:<max-entries> (default: 10)\n' +
+                    '**Note:** Entry is always FREE with one reaction! Tip entry fee is set globally with `/giveaway-set-tip-fee`\n' +
                     'Examples:\n' +
                     '• `/giveaway create 100 USDC 24h`\n' +
-                    '• `/giveaway create 100 USDC 24h fee:1.00 cap:20`'
+                    '• `/giveaway create 100 USDC 24h cap:20`'
             )
             return
         }
-
-        // Get tip fee from args or use default
-        const tipFeeArg = args.find(arg => arg.startsWith('fee:'))
-        const tipFeeUsd = tipFeeArg ? parseFloat(tipFeeArg.split(':')[1]) : 0.5
 
         // Get tip entry cap from args or use default (10 additional entries)
         const capArg = args.find(arg => arg.startsWith('cap:'))
         const tipEntryCap = capArg ? parseInt(capArg.split(':')[1]) : 10
 
-        // Use helper function to create giveaway
-        const result = await createGiveaway(handler, channelId, prize, durationStr, tipFeeUsd, tipEntryCap)
+        // Use helper function to create giveaway (uses global tip entry fee)
+        const result = await createGiveaway(handler, channelId, prize, durationStr, tipEntryCap)
         if (!result.success) {
             await handler.sendMessage(channelId, `❌ ${result.error}`)
             return
@@ -420,14 +448,15 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
 
         await handler.sendMessage(channelId, statusText)
     }
-    // Set tip fee: /giveaway set-fee <usd-amount>
-    else if (subcommand === 'set-fee') {
+    // Set tip fee: /giveaway set-fee <usd-amount> (sets global fee)
+    else if (subcommand === 'set-fee' || subcommand === 'set-tip-fee') {
         const feeArg = args[1]
         if (!feeArg) {
             await handler.sendMessage(
                 channelId,
                 'Usage: `/giveaway set-fee <usd-amount>`\n' +
-                    'Example: `/giveaway set-fee 1.00` (sets fee to $1.00 USD)'
+                    'Example: `/giveaway set-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
+                    '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
             )
             return
         }
@@ -438,18 +467,15 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
             return
         }
 
-        const giveaway = getGiveaway(channelId)
-        if (!giveaway || !giveaway.isActive) {
-            await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
-            return
-        }
-
-        giveaway.tipEntryFee = usdToWei(feeUsd)
-        const capAmountUsd = feeUsd * giveaway.tipEntryCap
+        // Update global tip entry fee
+        globalTipEntryFeeUsd = feeUsd
+        const tipEntryFeeWei = usdToWei(feeUsd)
+        
         await handler.sendMessage(
             channelId,
-            `✅ Tip entry fee updated to $${feeUsd.toFixed(2)} USD (${formatWei(giveaway.tipEntryFee)} ETH)\n` +
-                `New cap amount: $${capAmountUsd.toFixed(2)} USD in ETH for ${giveaway.tipEntryCap} entries`
+            `✅ Global tip entry fee updated to $${feeUsd.toFixed(2)} USD per entry (${formatWei(tipEntryFeeWei)} ETH)\n\n` +
+                `This applies to all giveaways. Users get 1 additional entry for every $${feeUsd.toFixed(2)} USD in ETH they tip.\n` +
+                `**Note:** Entry via reaction is always FREE!`
         )
     }
     // Set tip entry cap: /giveaway set-cap <max-entries>
@@ -514,11 +540,307 @@ bot.onSlashCommand('giveaway', async (handler, event) => {
                 '• `create` - Create a new giveaway\n' +
                 '• `end` - End current giveaway\n' +
                 '• `status` - Check giveaway status\n' +
-                '• `set-fee` - Set tip entry fee\n' +
+                '• `set-fee` or `set-tip-fee` - Set global tip entry fee\n' +
                 '• `set-cap` - Set max tip entries per user\n' +
                 '• `set-eth-price` - Update ETH price'
         )
     }
+})
+
+// Standalone slash command handlers for giveaway subcommands
+bot.onSlashCommand('giveaway-create', async (handler, event) => {
+    const { channelId, userId, spaceId } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can create giveaways.')
+        return
+    }
+
+    // Check if there's already an active giveaway
+    const existing = getGiveaway(channelId)
+    if (existing && existing.isActive) {
+        await handler.sendMessage(
+            channelId,
+            '❌ There is already an active giveaway in this channel. End it first with `/giveaway end`'
+        )
+        return
+    }
+
+    // Show interactive template
+    const templateMessage = await handler.sendMessage(
+        channelId,
+        `🎁 **Create New Giveaway**\n\n` +
+            `**Just reply to this message with your giveaway details!**\n\n` +
+            `**You can reply in any format, for example:**\n\n` +
+            `• \`Prize: 100 USDC, Duration: 24h\`\n` +
+            `• \`100 USDC for 24 hours\`\n` +
+            `• \`Prize: 1 ETH\nDuration: 7d\nMax Entries: 20\`\n` +
+            `• \`Give away 100 USDC for 2 days\`\n\n` +
+            `**Required:** Prize description and duration (e.g., 24h, 7d, 30m)\n` +
+            `**Optional:** Max entries from tips (default: 10)\n\n` +
+            `**Note:** Entry is FREE with one reaction! Tips give additional entries (fee set by /giveaway-set-tip-fee)\n\n` +
+            `**Examples:**\n` +
+            `• "100 USDC for 24 hours"\n` +
+            `• "Prize: 1 ETH, Duration: 7d"\n` +
+            `• "Give away an NFT for 3 days"`
+    )
+
+    // Track that this user is creating a giveaway
+    giveawayCreationState.set(userId, {
+        channelId,
+        templateMessageId: templateMessage.eventId,
+    })
+})
+
+bot.onSlashCommand('giveaway-end', async (handler, event) => {
+    const { channelId, userId, spaceId } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
+        return
+    }
+
+    const giveaway = getGiveaway(channelId)
+    if (!giveaway || !giveaway.isActive) {
+        await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
+        return
+    }
+
+    giveaway.isActive = false
+    const winner = selectWinner(giveaway)
+
+    if (!winner) {
+        await handler.sendMessage(channelId, '🎁 Giveaway ended. No entries were received.')
+        return
+    }
+
+    const allUsers = new Set([
+        ...giveaway.reactionEntries.keys(),
+        ...giveaway.tipEntries.keys()
+    ])
+    const totalEntries = Array.from(allUsers).reduce((sum, userId) => 
+        sum + getTotalEntries(giveaway, userId), 0
+    )
+    const winnerEntries = getTotalEntries(giveaway, winner)
+
+    await handler.sendMessage(
+        channelId,
+        `🎉 **GIVEAWAY ENDED!** 🎉\n\n` +
+            `**Prize:** ${giveaway.prize}\n` +
+            `**Winner:** <@${winner}>\n` +
+            `**Winner's entries:** ${winnerEntries}\n` +
+            `**Total entries:** ${totalEntries}\n` +
+            `**Participants:** ${allUsers.size}\n\n` +
+            `Congratulations to the winner! 🎊`
+    )
+
+    activeGiveaways.delete(channelId)
+})
+
+bot.onSlashCommand('giveaway-status', async (handler, event) => {
+    const { channelId } = event
+
+    const giveaway = getGiveaway(channelId)
+    if (!giveaway || !giveaway.isActive) {
+        await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
+        return
+    }
+
+    const allUsers = new Set([
+        ...giveaway.reactionEntries.keys(),
+        ...giveaway.tipEntries.keys()
+    ])
+    const totalEntries = Array.from(allUsers).reduce((sum, userId) => 
+        sum + getTotalEntries(giveaway, userId), 0
+    )
+    const tipFeeUsd = (Number(giveaway.tipEntryFee) / 1e18) * ethPriceUsd
+    const capAmountUsd = tipFeeUsd * giveaway.tipEntryCap
+
+    let statusText = `**🎁 Giveaway Status**\n\n`
+    statusText += `**Prize:** ${giveaway.prize}\n`
+    statusText += `**Started:** ${giveaway.startTime.toLocaleString()}\n`
+    statusText += `**Ends:** ${giveaway.endTime.toLocaleString()}\n`
+    statusText += `**Time remaining:** ${formatTimeRemaining(giveaway.endTime)}\n`
+    statusText += `**Tip entry fee:** $${tipFeeUsd.toFixed(2)} USD (${formatWei(giveaway.tipEntryFee)} ETH)\n`
+    statusText += `**Max tip entries:** ${giveaway.tipEntryCap} (cap: $${capAmountUsd.toFixed(2)} USD in ETH)\n\n`
+    statusText += `**Entries:**\n`
+    statusText += `• Total entries: ${totalEntries}\n`
+    statusText += `• Participants: ${allUsers.size}\n\n`
+
+    // Show top 5 participants
+    const sortedEntries = Array.from(allUsers)
+        .map(userId => ({
+            userId,
+            total: getTotalEntries(giveaway, userId),
+            reactions: giveaway.reactionEntries.get(userId) || 0,
+            tips: giveaway.tipEntries.get(userId) || 0
+        }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5)
+
+    if (sortedEntries.length > 0) {
+        statusText += `**Top Participants:**\n`
+        for (const entry of sortedEntries) {
+            statusText += `• <@${entry.userId}>: ${entry.total} entries (${entry.reactions} reactions, ${entry.tips} tips)\n`
+        }
+    }
+
+    await handler.sendMessage(channelId, statusText)
+})
+
+bot.onSlashCommand('giveaway-set-fee', async (handler, event) => {
+    const { channelId, userId, spaceId, args } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
+        return
+    }
+
+    const feeArg = args[0]
+    if (!feeArg) {
+        await handler.sendMessage(
+            channelId,
+            'Usage: `/giveaway-set-fee <usd-amount>`\n' +
+                'Example: `/giveaway-set-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
+                '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
+        )
+        return
+    }
+
+    const feeUsd = parseFloat(feeArg)
+    if (isNaN(feeUsd) || feeUsd <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid amount. Please provide a positive number.')
+        return
+    }
+
+    // Update global tip entry fee
+    globalTipEntryFeeUsd = feeUsd
+    const tipEntryFeeWei = usdToWei(feeUsd)
+    
+    await handler.sendMessage(
+        channelId,
+        `✅ Global tip entry fee updated to $${feeUsd.toFixed(2)} USD per entry (${formatWei(tipEntryFeeWei)} ETH)\n\n` +
+            `This applies to all giveaways. Users get 1 additional entry for every $${feeUsd.toFixed(2)} USD in ETH they tip.\n` +
+            `**Note:** Entry via reaction is always FREE!`
+    )
+})
+
+// Alias for giveaway-set-tip-fee (same functionality)
+bot.onSlashCommand('giveaway-set-tip-fee', async (handler, event) => {
+    const { channelId, userId, spaceId, args } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
+        return
+    }
+
+    const feeArg = args[0]
+    if (!feeArg) {
+        await handler.sendMessage(
+            channelId,
+            'Usage: `/giveaway-set-tip-fee <usd-amount>`\n' +
+                'Example: `/giveaway-set-tip-fee 1.00` (sets global tip fee to $1.00 USD per entry)\n\n' +
+                '**Note:** This sets the global tip entry fee for all giveaways. Entry via reaction is always FREE!'
+        )
+        return
+    }
+
+    const feeUsd = parseFloat(feeArg)
+    if (isNaN(feeUsd) || feeUsd <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid amount. Please provide a positive number.')
+        return
+    }
+
+    // Update global tip entry fee
+    globalTipEntryFeeUsd = feeUsd
+    const tipEntryFeeWei = usdToWei(feeUsd)
+    
+    await handler.sendMessage(
+        channelId,
+        `✅ Global tip entry fee updated to $${feeUsd.toFixed(2)} USD per entry (${formatWei(tipEntryFeeWei)} ETH)\n\n` +
+            `This applies to all giveaways. Users get 1 additional entry for every $${feeUsd.toFixed(2)} USD in ETH they tip.\n` +
+            `**Note:** Entry via reaction is always FREE!`
+    )
+})
+
+bot.onSlashCommand('giveaway-set-cap', async (handler, event) => {
+    const { channelId, userId, spaceId, args } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
+        return
+    }
+
+    const capArg = args[0]
+    if (!capArg) {
+        await handler.sendMessage(
+            channelId,
+            'Usage: `/giveaway-set-cap <max-entries>`\n' +
+                'Example: `/giveaway-set-cap 20` (sets max tip entries to 20)'
+        )
+        return
+    }
+
+    const cap = parseInt(capArg)
+    if (isNaN(cap) || cap <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid number. Please provide a positive integer.')
+        return
+    }
+
+    const giveaway = getGiveaway(channelId)
+    if (!giveaway || !giveaway.isActive) {
+        await handler.sendMessage(channelId, '❌ No active giveaway in this channel.')
+        return
+    }
+
+    giveaway.tipEntryCap = cap
+    const tipFeeUsd = (Number(giveaway.tipEntryFee) / 1e18) * ethPriceUsd
+    const capAmountUsd = tipFeeUsd * cap
+    await handler.sendMessage(
+        channelId,
+        `✅ Tip entry cap updated to ${cap} entries\n` +
+            `Users can tip up to $${capAmountUsd.toFixed(2)} USD in ETH for additional entries`
+    )
+})
+
+bot.onSlashCommand('giveaway-set-eth-price', async (handler, event) => {
+    const { channelId, userId, spaceId, args } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can manage giveaways.')
+        return
+    }
+
+    const priceArg = args[0]
+    if (!priceArg) {
+        await handler.sendMessage(
+            channelId,
+            'Usage: `/giveaway-set-eth-price <price>`\n' +
+                'Example: `/giveaway-set-eth-price 3000` (sets ETH price to $3000 USD)'
+        )
+        return
+    }
+
+    const price = parseFloat(priceArg)
+    if (isNaN(price) || price <= 0) {
+        await handler.sendMessage(channelId, '❌ Invalid price. Please provide a positive number.')
+        return
+    }
+
+    ethPriceUsd = price
+    await handler.sendMessage(channelId, `✅ ETH price updated to $${price.toFixed(2)} USD`)
 })
 
 // Handle reactions for entries
@@ -644,39 +966,68 @@ bot.onMessage(async (handler, event) => {
         return
     }
 
-    // Parse the message for giveaway details
-    // Support multiple formats:
+    // Parse the message for giveaway details - support natural language
+    // Multiple formats supported:
     // 1. Labeled: "Prize: 100 USDC, Duration: 24h"
-    // 2. Line-by-line: "Prize: 100 USDC\nDuration: 24h"
-    // 3. Simple: "100 USDC\n24h" (first line is prize, second is duration)
+    // 2. Natural: "100 USDC for 24 hours", "Give away 1 ETH for 7 days"
+    // 3. Line-by-line: "Prize: 100 USDC\nDuration: 24h"
+    // 4. Simple: "100 USDC\n24h"
     
+    let prize: string | undefined
+    let durationStr: string | undefined
+    let capStr: string | undefined
+
     // Try labeled format first
-    let prizeMatch = message.match(/Prize:\s*(.+?)(?:\s*[,;]|\n|$)/i)
-    let durationMatch = message.match(/Duration:\s*(\d+[hdm])(?:\s*[,;]|\n|$)/i)
-    let feeMatch = message.match(/Entry Fee:\s*([\d.]+)(?:\s*[,;]|\n|$)/i)
-    let capMatch = message.match(/Max Entries:\s*(\d+)(?:\s*[,;]|\n|$)/i)
+    const prizeMatch = message.match(/(?:Prize|prize):\s*(.+?)(?:\s*[,;]|\n|$)/i)
+    const durationMatch = message.match(/(?:Duration|duration):\s*(\d+[hdm])(?:\s*[,;]|\n|$)/i)
+    const capMatch = message.match(/(?:Max Entries|max entries|cap):\s*(\d+)(?:\s*[,;]|\n|$)/i)
 
-    let prize = prizeMatch?.[1]?.trim()
-    let durationStr = durationMatch?.[1]?.trim()
-    let feeStr = feeMatch?.[1]?.trim()
-    let capStr = capMatch?.[1]?.trim()
+    if (prizeMatch) prize = prizeMatch[1].trim()
+    if (durationMatch) durationStr = durationMatch[1].trim()
+    if (capMatch) capStr = capMatch[1].trim()
 
-    // If no labeled format, try simple line-by-line format
+    // If no labeled format, try natural language parsing
+    if (!prize || !durationStr) {
+        // Natural language patterns
+        // "100 USDC for 24h" or "Give away 100 USDC for 2 days"
+        const naturalPattern = /(?:give away|prize|giveaway)?\s*([^,;]+?)\s+(?:for|lasting|duration|runs?)\s+(\d+[hdm]|(?:\d+\s*(?:days?|hours?|minutes?|h|d|m)))/i
+        const naturalMatch = message.match(naturalPattern)
+        
+        if (naturalMatch) {
+            prize = naturalMatch[1].trim().replace(/^(prize|giveaway|give away):?\s*/i, '')
+            // Normalize duration format
+            let duration = naturalMatch[2].trim().toLowerCase()
+            // Convert "2 days" to "2d", "24 hours" to "24h", etc.
+            duration = duration.replace(/\s*(days?|d)\s*$/i, 'd')
+            duration = duration.replace(/\s*(hours?|h)\s*$/i, 'h')
+            duration = duration.replace(/\s*(minutes?|m)\s*$/i, 'm')
+            durationStr = duration
+        }
+    }
+
+    // If still no match, try simple line-by-line format
     if (!prize || !durationStr) {
         const lines = message.split('\n').map(l => l.trim()).filter(l => l)
         if (lines.length >= 2) {
-            // First line might be prize, second might be duration
-            // Check if first line looks like a prize (not a duration)
-            if (!lines[0].match(/^\d+[hdm]$/i) && lines[1].match(/^\d+[hdm]$/i)) {
-                prize = lines[0]
-                durationStr = lines[1]
-                // Third line might be fee
-                if (lines[2] && /^[\d.]+$/.test(lines[2])) {
-                    feeStr = lines[2]
+            // Look for duration pattern in any line
+            for (const line of lines) {
+                const durationPattern = /(\d+[hdm])/i
+                const match = line.match(durationPattern)
+                if (match) {
+                    durationStr = match[1]
+                    // Prize is likely the line before or after, or the first line
+                    const prizeLine = lines.find(l => !l.match(/\d+[hdm]/i) && l.length > 3)
+                    if (prizeLine) {
+                        prize = prizeLine.replace(/^(prize|giveaway|give away):?\s*/i, '').trim()
+                    }
+                    break
                 }
-                // Fourth line might be cap
-                if (lines[3] && /^\d+$/.test(lines[3])) {
-                    capStr = lines[3]
+            }
+            
+            // If still no prize, use first line that doesn't look like a duration
+            if (!prize && lines[0]) {
+                if (!lines[0].match(/^\d+[hdm]$/i)) {
+                    prize = lines[0].replace(/^(prize|giveaway|give away):?\s*/i, '').trim()
                 }
             }
         }
@@ -685,29 +1036,19 @@ bot.onMessage(async (handler, event) => {
     if (!prize || !durationStr) {
         await handler.sendMessage(
             channelId,
-            `❌ Invalid format. Please provide:\n` +
-                `• Prize: [description]\n` +
-                `• Duration: [e.g., 24h, 7d, 30m]\n` +
-                `• Entry Fee: [optional, e.g., 0.50]\n` +
-                `• Max Entries: [optional, e.g., 10]\n\n` +
-                `Example:\n` +
-                `Prize: 100 USDC\n` +
-                `Duration: 24h\n` +
-                `Entry Fee: 0.50\n` +
-                `Max Entries: 10`
+            `❌ I couldn't parse your giveaway details. Please include:\n\n` +
+                `• **Prize description** (e.g., "100 USDC", "1 ETH", "NFT Prize")\n` +
+                `• **Duration** (e.g., "24h", "7d", "30m", "2 days", "24 hours")\n\n` +
+                `**Examples:**\n` +
+                `• "100 USDC for 24 hours"\n` +
+                `• "Prize: 1 ETH, Duration: 7d"\n` +
+                `• "Give away an NFT for 3 days"`
         )
         return
     }
 
     // Parse optional values with defaults
-    const tipFeeUsd = feeStr ? parseFloat(feeStr) : 0.5
     const tipEntryCap = capStr ? parseInt(capStr) : 10
-
-    if (isNaN(tipFeeUsd) || tipFeeUsd <= 0) {
-        await handler.sendMessage(channelId, '❌ Invalid entry fee. Please provide a positive number.')
-        giveawayCreationState.delete(userId)
-        return
-    }
 
     if (isNaN(tipEntryCap) || tipEntryCap <= 0) {
         await handler.sendMessage(channelId, '❌ Invalid max entries. Please provide a positive integer.')
@@ -718,8 +1059,8 @@ bot.onMessage(async (handler, event) => {
     // Clear creation state before creating (in case of errors)
     giveawayCreationState.delete(userId)
 
-    // Create the giveaway
-    const result = await createGiveaway(handler, channelId, prize, durationStr, tipFeeUsd, tipEntryCap)
+    // Create the giveaway (uses global tip entry fee)
+    const result = await createGiveaway(handler, channelId, prize, durationStr, tipEntryCap)
     if (!result.success) {
         await handler.sendMessage(channelId, `❌ ${result.error}`)
         return
