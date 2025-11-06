@@ -1,7 +1,9 @@
 import { makeTownsBot } from '@towns-protocol/bot'
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
-import { parseEther, formatEther } from 'viem'
+import { parseEther, formatEther, zeroAddress } from 'viem'
+import { writeContract, waitForTransactionReceipt, getBalance } from 'viem/actions'
+import simpleAppAbi from '@towns-protocol/bot/simpleAppAbi'
 import commands from './commands'
 
 // Giveaway state structure
@@ -31,6 +33,9 @@ let ethPriceUsd = 3000
 // Global tip entry fee in USD (how much USD in ETH = 1 additional entry)
 // Default: $0.50 USD per entry (adjustable via command)
 let globalTipEntryFeeUsd = 0.5
+
+// Bot wallet address for fund distribution
+const BOT_WALLET_ADDRESS = '0x8261B3a7647c6c083bC690258D6dceA292f75102' as const
 
 // Calculate wei equivalent of USD amount
 function usdToWei(usdAmount: number): bigint {
@@ -253,7 +258,8 @@ bot.onSlashCommand('help', async (handler, { channelId }) => {
     helpText += '• `/giveaway_end` - End current giveaway early\n'
     helpText += '• `/giveaway_set_tip_fee <usd-amount>` - Set global tip entry fee (default: $0.50 per entry)\n'
     helpText += '• `/giveaway_set_cap <max-entries>` - Set max tip entries per user (default: 10)\n'
-    helpText += '• `/giveaway_set_eth_price <price>` - Update ETH price in USD (default: $3000)\n\n'
+    helpText += '• `/giveaway_set_eth_price <price>` - Update ETH price in USD (default: $3000)\n'
+    helpText += '• `/giveaway_withdraw [amount|all]` - Withdraw funds from app contract to bot wallet\n\n'
     helpText += '**Note:** Entry is always FREE with one reaction! Tips give additional entries.'
 
     await handler.sendMessage(channelId, helpText)
@@ -513,6 +519,125 @@ bot.onSlashCommand('giveaway_set_eth_price', async (handler, event) => {
 
     ethPriceUsd = price
     await handler.sendMessage(channelId, `✅ ETH price updated to $${price.toFixed(2)} USD`)
+})
+
+// Helper function to withdraw funds from app contract to bot wallet
+async function withdrawToBotWallet(amount: bigint | 'all'): Promise<{ success: boolean; error?: string; txHash?: string }> {
+    try {
+        let withdrawAmount: bigint
+
+        if (amount === 'all') {
+            // Get the current balance of the app contract
+            const balance = await getBalance(bot.viem, {
+                address: bot.appAddress
+            })
+            // Reserve some ETH for gas (0.001 ETH)
+            const gasReserve = parseEther('0.001')
+            if (balance <= gasReserve) {
+                return {
+                    success: false,
+                    error: `Insufficient balance. Contract has ${formatEther(balance)} ETH, but needs at least ${formatEther(gasReserve)} ETH for gas.`
+                }
+            }
+            withdrawAmount = balance - gasReserve
+        } else {
+            withdrawAmount = amount
+            // Check if contract has enough balance
+            const balance = await getBalance(bot.viem, {
+                address: bot.appAddress
+            })
+            if (balance < withdrawAmount) {
+                return {
+                    success: false,
+                    error: `Insufficient balance. Contract has ${formatEther(balance)} ETH, but requested ${formatEther(withdrawAmount)} ETH.`
+                }
+            }
+        }
+
+        // Use sendCurrency to transfer ETH from app contract to bot wallet
+        // sendCurrency(recipient, currency (zeroAddress for ETH), amount)
+        const txHash = await writeContract(bot.viem, {
+            address: bot.appAddress,
+            abi: simpleAppAbi,
+            functionName: 'sendCurrency',
+            args: [BOT_WALLET_ADDRESS, zeroAddress, withdrawAmount]
+        })
+
+        await waitForTransactionReceipt(bot.viem, { hash: txHash })
+
+        return {
+            success: true,
+            txHash
+        }
+    } catch (error: any) {
+        return {
+            success: false,
+            error: error.message || 'Failed to withdraw funds'
+        }
+    }
+}
+
+bot.onSlashCommand('giveaway_withdraw', async (handler, event) => {
+    const { channelId, userId, spaceId, args } = event
+
+    // Check if user is admin
+    const isAdmin = await handler.hasAdminPermission(userId, spaceId)
+    if (!isAdmin) {
+        await handler.sendMessage(channelId, '❌ Only admins can withdraw funds.')
+        return
+    }
+
+    // Check current balance
+    const balance = await getBalance(bot.viem, {
+        address: bot.appAddress
+    })
+
+    if (balance === 0n) {
+        await handler.sendMessage(channelId, '❌ No funds available in the app contract.')
+        return
+    }
+
+    // Parse amount argument
+    const amountArg = args[0]
+    let amount: bigint | 'all'
+
+    if (!amountArg || amountArg.toLowerCase() === 'all') {
+        amount = 'all'
+    } else {
+        const parsedAmount = parseFloat(amountArg)
+        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+            await handler.sendMessage(
+                channelId,
+                'Usage: `/giveaway_withdraw [amount|all]`\n' +
+                    '• `/giveaway_withdraw all` - Withdraw all available funds (minus gas reserve)\n' +
+                    '• `/giveaway_withdraw 0.1` - Withdraw specific amount in ETH\n\n' +
+                    `Current contract balance: ${formatEther(balance)} ETH`
+            )
+            return
+        }
+        amount = parseEther(amountArg)
+    }
+
+    await handler.sendMessage(channelId, `⏳ Withdrawing funds from app contract to bot wallet...`)
+
+    const result = await withdrawToBotWallet(amount)
+
+    if (!result.success) {
+        await handler.sendMessage(channelId, `❌ Withdrawal failed: ${result.error}`)
+        return
+    }
+
+    const finalBalance = await getBalance(bot.viem, {
+        address: bot.appAddress
+    })
+
+    await handler.sendMessage(
+        channelId,
+        `✅ Successfully withdrew ${formatEther(amount === 'all' ? balance - finalBalance : amount)} ETH to bot wallet!\n\n` +
+            `**Transaction:** ${result.txHash}\n` +
+            `**Bot Wallet:** ${BOT_WALLET_ADDRESS}\n` +
+            `**Remaining Contract Balance:** ${formatEther(finalBalance)} ETH`
+    )
 })
 
 // Handle reactions for entries

@@ -29,6 +29,10 @@ const commands = [
         name: 'giveaway_set_eth_price',
         description: 'Update ETH price in USD - admin only',
     },
+    {
+        name: 'giveaway_withdraw',
+        description: 'Withdraw funds from app contract to bot wallet - admin only',
+    },
 ] as const satisfies PlainMessage<SlashCommand>[]
 
 export default commands
