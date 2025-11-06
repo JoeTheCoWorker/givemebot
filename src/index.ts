@@ -554,10 +554,16 @@ bot.onReaction(async (handler, event) => {
 bot.onTip(async (handler, event) => {
     const { channelId, receiverAddress, amount } = event
 
-    // Check if tip is for the bot
-    if (receiverAddress !== bot.botId) {
+    // Check if tip is for the bot (either bot ID or app contract address)
+    // Tips can be sent to either the bot's user address or the app contract address
+    const isBotTip = receiverAddress === bot.botId || receiverAddress.toLowerCase() === bot.appAddress.toLowerCase()
+    
+    if (!isBotTip) {
         return
     }
+
+    // Debug log for tip detection
+    console.log(`[Tip Detected] receiverAddress: ${receiverAddress}, bot.botId: ${bot.botId}, bot.appAddress: ${bot.appAddress}, amount: ${amount.toString()}`)
 
     const giveaway = getGiveaway(channelId)
     if (!giveaway || !giveaway.isActive) {
